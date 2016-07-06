@@ -1284,11 +1284,20 @@ static void GenerateRandomCuDNNKaldiComponentPairConfig(std::string *component_t
 
       int32 input_vectorization = Rand() % 2;
       std::string vectorization;
+      std::string cudnn_input_vectorization;
+      std::string cudnn_output_vectorization;
+      // Please note that now the original comonent and the cudnn comonent
+      // has an opposite meaning to the tensor format
       if (input_vectorization == 0) {
         vectorization = "yzx";
+        cudnn_input_vectorization = "CXZY";
       } else  {
         vectorization = "zyx";
+        cudnn_input_vectorization = "CXYZ";
       }
+      // here we hardcode the output vectorization of the cudnn component
+      // to fit the format "zyx" of original component
+      cudnn_output_vectorization = "XYZC";
       std::string matrix_filename="temp.mat";
 
       int32 input_x_dim = 10 + Rand() % 20,
@@ -1326,7 +1335,8 @@ static void GenerateRandomCuDNNKaldiComponentPairConfig(std::string *component_t
          << " filt-x-step=" << filt_x_step
          << " filt-y-step=" << filt_y_step
          << " filt-z-step=" << filt_z_step
-         << " input-vectorization-order=" << vectorization
+         << " input-vectorization-order=" << cudnn_input_vectorization
+         << " output-vectorization-order=" << cudnn_output_vectorization
          << " matrix=" << matrix_filename
          << " learning-rate=" << learning_rate;
 

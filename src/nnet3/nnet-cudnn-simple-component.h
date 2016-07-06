@@ -32,13 +32,12 @@ namespace nnet3 {
 class CuDNN3DConvolutionComponent: public UpdatableComponent {
  public:
 
-// the following vectorization notation need to be modified
-// as they are arranging the dimension from smallest to largest
-// stride which is opposite to the convention used by a large group
-// of people
+// the dimensions referenced by the letters are sorted in decreasing
+// order of their respective strides
   enum TensorVectorizationType  {
-    kYzx = 0,
-    kZyx = 1
+    kCXYZ = 0,
+    kCXZY = 1,
+    kXYZC = 2
   };
 
   virtual int32 InputDim() const { return input_num_filters_ * input_x_dim_ * input_y_dim_ * input_z_dim_; }
@@ -80,6 +79,7 @@ class CuDNN3DConvolutionComponent: public UpdatableComponent {
             int32 pad_x_dim, int32 pad_y_dim, int32 pad_z_dim,
             int32 upscale_x_dim, int32 upscale_y_dim, int32 upscale_z_dim,
             TensorVectorizationType input_vectorization,
+            TensorVectorizationType output_vectorization,
             BaseFloat param_stddev, BaseFloat bias_stddev);
   void Init(int32 input_x_dim, int32 input_y_dim, int32 input_z_dim,
             int32 input_num_filters,
@@ -88,6 +88,7 @@ class CuDNN3DConvolutionComponent: public UpdatableComponent {
             int32 pad_x_dim, int32 pad_y_dim, int32 pad_z_dim,
             int32 upscale_x_dim, int32 upscale_y_dim, int32 upscale_z_dim,
             TensorVectorizationType input_vectorization,
+            TensorVectorizationType output_vectorization,
             std::string matrix_filename);
 
   // constructor using another component
@@ -151,6 +152,7 @@ class CuDNN3DConvolutionComponent: public UpdatableComponent {
 
   TensorVectorizationType input_vectorization_; // type of vectorization of the
   // input 3D tensor. Accepts zyx and yzx formats
+  TensorVectorizationType output_vectorization_; // type of vectorization of the
 
   // cudnn specific variables.
   static const int32 kConvolutionDimension_ = 3; // the number of dimensions that the filter is in

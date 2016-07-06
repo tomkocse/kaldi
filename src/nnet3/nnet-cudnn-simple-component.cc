@@ -69,9 +69,9 @@ void array_strides_NCXZY(int n_dims, const int *shape, int *strides) {
 
 void CuDNN3DConvolutionComponent::FillInputStrides(int32 n_dims,
                     const int32 *shape, int32 *strides) const {
-  if (input_vectorization_ == kZyx)
+  if (input_vectorization_ == kCXYZ)
     array_strides_NCXYZ(n_dims, shape, strides);
-  else if (input_vectorization_ == kYzx)
+  else if (input_vectorization_ == kCXZY)
     array_strides_NCXZY(n_dims, shape, strides);
   else
     KALDI_ERR << "Unknown or unsupported input vectorization order ";
@@ -79,7 +79,13 @@ void CuDNN3DConvolutionComponent::FillInputStrides(int32 n_dims,
 
 void CuDNN3DConvolutionComponent::FillOutputStrides(int32 n_dims,
                       const int32 *shape, int32 *strides) const{
-  array_strides_NXYZC(n_dims, shape, strides);
+  if (output_vectorization_ == kCXYZ)
+    array_strides_NCXYZ(n_dims, shape, strides);
+  else if (output_vectorization_ == kXYZC)
+    array_strides_NXYZC(n_dims, shape, strides);
+  else
+    KALDI_ERR << "Unknown or unsupported output vectorization order ";
+
 }
 
 
@@ -88,7 +94,8 @@ CuDNN3DConvolutionComponent::CuDNN3DConvolutionComponent() :
   input_x_dim_(0), input_y_dim_(0), input_z_dim_(0),
   input_num_filters_(0), num_filters_(0),
   work_space_(NULL), work_space_size_(0),
-  is_gradient_(false), input_vectorization_(kZyx),
+  is_gradient_(false), input_vectorization_(kCXYZ),
+  output_vectorization_(kCXYZ),
   forward_algo_(CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_GEMM),
   backward_filter_algo_(CUDNN_CONVOLUTION_BWD_FILTER_ALGO_0),
   backward_data_algo_(CUDNN_CONVOLUTION_BWD_DATA_ALGO_0) {
@@ -112,6 +119,7 @@ CuDNN3DConvolutionComponent::CuDNN3DConvolutionComponent(
   work_space_size_(component.work_space_size_),
   is_gradient_(component.is_gradient_),
   input_vectorization_(component.input_vectorization_),
+  output_vectorization_(component.output_vectorization_),
   filter_desc_(cudnn::CopyFilterDesc(component.filter_desc_)),
   bias_desc_(cudnn::CopyTensorDesc(component.bias_desc_)),
   conv_desc_(cudnn::CopyConvolutionDesc(component.conv_desc_)),
@@ -206,12 +214,14 @@ void CuDNN3DConvolutionComponent::Init(
     int32 pad_x_dim, int32 pad_y_dim, int32 pad_z_dim,
     int32 upscale_x_dim, int32 upscale_y_dim, int32 upscale_z_dim,
     TensorVectorizationType input_vectorization,
+    TensorVectorizationType output_vectorization,
     std::string matrix_filename) {
   input_x_dim_ = input_x_dim;
   input_y_dim_ = input_y_dim;
   input_z_dim_ = input_z_dim;
   input_num_filters_ = input_num_filters;
   input_vectorization_ = input_vectorization;
+  output_vectorization_ = output_vectorization;
   CuMatrix<BaseFloat> mat;
   ReadKaldiObject(matrix_filename, &mat);
   int32 filter_dim = input_num_filters_ * filt_x_dim * filt_y_dim * filt_z_dim;
@@ -239,6 +249,7 @@ void CuDNN3DConvolutionComponent::Init(
     int32 pad_x_dim, int32 pad_y_dim, int32 pad_z_dim,
     int32 upscale_x_dim, int32 upscale_y_dim, int32 upscale_z_dim,
     TensorVectorizationType input_vectorization,
+    TensorVectorizationType output_vectorization,
     BaseFloat param_stddev, BaseFloat bias_stddev) {
   input_x_dim_ = input_x_dim;
   input_y_dim_ = input_y_dim;
@@ -246,6 +257,7 @@ void CuDNN3DConvolutionComponent::Init(
   input_num_filters_ = input_num_filters;
   num_filters_ = num_filters;
   input_vectorization_ = input_vectorization;
+  output_vectorization_ = output_vectorization;
   int32 filter_dim = input_num_filters_ * filt_x_dim * filt_y_dim * filt_z_dim;
   filter_params_.Resize(num_filters_, filter_dim, kUndefined,
                         kStrideEqualNumCols);
@@ -295,20 +307,36 @@ void CuDNN3DConvolutionComponent::InitFromConfig(ConfigLine *cfl) {
     input_num_filters = 1;
   }
 
-  std::string input_vectorization_order = "zyx";
+  std::string input_vectorization_order = "CXYZ";
   if(!cfl->GetValue("input-vectorization-order", &input_vectorization_order)) {
-    input_vectorization_order = "zyx";
+    input_vectorization_order = "CXYZ";
   }
-  TensorVectorizationType input_vectorization = kZyx;
-  if (input_vectorization_order.compare("zyx") == 0) {
-    input_vectorization = kZyx;
-  } else if (input_vectorization_order.compare("yzx") == 0) {
-    input_vectorization = kYzx;
+  TensorVectorizationType input_vectorization = kCXYZ;
+  if (input_vectorization_order.compare("CXYZ") == 0) {
+    input_vectorization = kCXYZ;
+  } else if (input_vectorization_order.compare("CXZY") == 0) {
+    input_vectorization = kCXZY;
   } else {
     KALDI_ERR << "Unknown or unsupported input vectorization order "
               << input_vectorization_order
-              << " accepted candidates are 'yzx' and 'zyx'";
+              << " accepted candidates are 'CXYZ' and 'CXZY'";
   }
+
+  std::string output_vectorization_order = "CXYZ";
+  if(!cfl->GetValue("output-vectorization-order", &output_vectorization_order)) {
+    output_vectorization_order = "CXYZ";
+  }
+  TensorVectorizationType output_vectorization = kCXYZ;
+  if (output_vectorization_order.compare("CXYZ") == 0) {
+    output_vectorization = kCXYZ;
+  } else if (output_vectorization_order.compare("XYZC") == 0) {
+    output_vectorization = kXYZC;
+  } else {
+    KALDI_ERR << "Unknown or unsupported output vectorization order "
+              << output_vectorization_order
+              << " accepted candidates are 'CXYZ' and 'CXZY'";
+  }
+
 
   // upscale_<k>_dim is how many times to
   // repeat each output in the <k>th dimension. This is
@@ -346,7 +374,7 @@ void CuDNN3DConvolutionComponent::InitFromConfig(ConfigLine *cfl) {
          filt_x_stride, filt_y_stride, filt_z_stride,
          pad_x_dim, pad_y_dim, pad_z_dim,
          upscale_x_dim, upscale_y_dim, upscale_z_dim,
-         input_vectorization,
+         input_vectorization, output_vectorization,
          matrix_filename);
   } else {
     ok = ok && cfl->GetValue("num-filters", &num_filters);
@@ -363,7 +391,7 @@ void CuDNN3DConvolutionComponent::InitFromConfig(ConfigLine *cfl) {
          num_filters,
          pad_x_dim, pad_y_dim, pad_z_dim,
          upscale_x_dim, upscale_y_dim, upscale_z_dim,
-         input_vectorization,
+         input_vectorization, output_vectorization,
          param_stddev, bias_stddev);
   }
   if (cfl->HasUnusedValues()) {
@@ -503,13 +531,10 @@ void CuDNN3DConvolutionComponent::Propagate(const ComponentPrecomputedIndexes *i
   CUDNN_SAFE_CALL(
     cudnnAddTensor(CuDevice::Instantiate().GetCudnnHandle(),
                    &cudnn::one,
-                   bias_desc_,
-                   bias_params_.Data(),
+                   bias_desc_, bias_params_.Data(),
                    &cudnn::one,
-                   out_desc,
-                   out->Data()
-                  )
-                  );
+                   out_desc, out->Data()
+                  ));
 
   CUDNN_SAFE_CALL(cudnnDestroyTensorDescriptor(in_desc));
   CUDNN_SAFE_CALL(cudnnDestroyTensorDescriptor(out_desc));
@@ -553,32 +578,6 @@ void CuDNN3DConvolutionComponent::Backprop(const std::string &debug_info,
                                              out_deriv_dims,
                                              out_deriv_strides
                                              ));
-
-  // Since the current cudnn ConvolutionBackwardData() only support 
-  // NCXYZ tensor layout for the out_deriv tensor, so we have to
-  // transform the tensor from its own format to NCXYZ, we need a dummy matrix
-  // for doing that
-  int32 out_deriv_strides_ncxyz[kConvolutionDimension_ + 2];
-  array_strides_NCXYZ(kConvolutionDimension_ + 2,
-                      out_deriv_dims, out_deriv_strides_ncxyz);
-  cudnnTensorDescriptor_t out_deriv_ncxyz_desc;
-  CUDNN_SAFE_CALL(cudnnCreateTensorDescriptor(&out_deriv_ncxyz_desc));
-  CUDNN_SAFE_CALL(cudnnSetTensorNdDescriptor(out_deriv_ncxyz_desc,
-                                             cudnn::GetDataType(),
-                                             kConvolutionDimension_ + 2,
-                                             out_deriv_dims,
-                                             out_deriv_strides_ncxyz
-                                             ));
-
-  CuMatrix<BaseFloat>* out_deriv_ncxyz;
-  out_deriv_ncxyz = new CuMatrix<BaseFloat>(
-    out_deriv.NumRows(), out_deriv.NumCols(), kUndefined, kStrideEqualNumCols);
-  CUDNN_SAFE_CALL(cudnnTransformTensor(CuDevice::Instantiate().GetCudnnHandle(),
-                                       &cudnn::one,
-                                       out_deriv_desc, out_deriv.Data(),
-                                       &cudnn::zero,
-                                       out_deriv_ncxyz_desc, out_deriv_ncxyz->Data()));
-
   int32 in_dims[kConvolutionDimension_ + 2] = {
     in_value.NumRows(),
     input_num_filters_,
@@ -597,8 +596,32 @@ void CuDNN3DConvolutionComponent::Backprop(const std::string &debug_info,
                                              in_strides
                                              ));
 
-  if (in_deriv) {
-    cudnn::ConvolutionBackwardData(CuDevice::Instantiate().GetCudnnHandle(),
+  if (output_vectorization_ != kCXYZ) {
+    // Since the current cudnn ConvolutionBackwardData() only support 
+    // NCXYZ tensor layout for the out_deriv tensor, so we have to
+    // transform the tensor from its own format to NCXYZ, we need a dummy matrix
+    // for doing that
+    cudnnTensorDescriptor_t out_deriv_ncxyz_desc;
+    int32 out_deriv_strides_ncxyz[kConvolutionDimension_ + 2];
+    array_strides_NCXYZ(kConvolutionDimension_ + 2,
+                        out_deriv_dims, out_deriv_strides_ncxyz);
+    CUDNN_SAFE_CALL(cudnnCreateTensorDescriptor(&out_deriv_ncxyz_desc));
+    CUDNN_SAFE_CALL(cudnnSetTensorNdDescriptor(out_deriv_ncxyz_desc,
+                                               cudnn::GetDataType(),
+                                               kConvolutionDimension_ + 2,
+                                               out_deriv_dims,
+                                               out_deriv_strides_ncxyz
+                                               ));
+    CuMatrix<BaseFloat>* out_deriv_ncxyz;
+    out_deriv_ncxyz = new CuMatrix<BaseFloat>(
+      out_deriv.NumRows(), out_deriv.NumCols(), kUndefined, kStrideEqualNumCols);
+    cudnn::TransformTensor(CuDevice::Instantiate().GetCudnnHandle(),
+                           &cudnn::one,
+                           out_deriv_desc, out_deriv.Data(),
+                           &cudnn::zero,
+                           out_deriv_ncxyz_desc, out_deriv_ncxyz->Data());
+    if (in_deriv) {
+      cudnn::ConvolutionBackwardData(CuDevice::Instantiate().GetCudnnHandle(),
                                    &cudnn::one,
                                    filter_desc_, filter_params_.Data(),
                                    out_deriv_ncxyz_desc, out_deriv_ncxyz->Data(),
@@ -607,15 +630,33 @@ void CuDNN3DConvolutionComponent::Backprop(const std::string &debug_info,
                                    work_space_, work_space_size_,
                                    &cudnn::one,
                                    in_desc, in_deriv->Data());
+    }
+    if (to_update) {
+      to_update->Update(in_value, *out_deriv_ncxyz, in_desc, out_deriv_ncxyz_desc);
+    }
+    delete out_deriv_ncxyz;
+    CUDNN_SAFE_CALL(cudnnDestroyTensorDescriptor(out_deriv_ncxyz_desc));
+
+  } else {
+    if (in_deriv) {
+      cudnn::ConvolutionBackwardData(CuDevice::Instantiate().GetCudnnHandle(),
+                                   &cudnn::one,
+                                   filter_desc_, filter_params_.Data(),
+                                   out_deriv_desc, out_deriv.Data(),
+                                   conv_desc_,
+                                   backward_data_algo_,
+                                   work_space_, work_space_size_,
+                                   &cudnn::one,
+                                   in_desc, in_deriv->Data());
+    }
+    if (to_update) {
+      to_update->Update(in_value, out_deriv, in_desc, out_deriv_desc);
+    }
   }
 
-  if (to_update) {
-    to_update->Update(in_value, *out_deriv_ncxyz, in_desc, out_deriv_ncxyz_desc);
-  }
-  delete out_deriv_ncxyz;
+
   CUDNN_SAFE_CALL(cudnnDestroyTensorDescriptor(in_desc));
   CUDNN_SAFE_CALL(cudnnDestroyTensorDescriptor(out_deriv_desc));
-  CUDNN_SAFE_CALL(cudnnDestroyTensorDescriptor(out_deriv_ncxyz_desc));
 }
 
 void CuDNN3DConvolutionComponent::Update(const CuMatrixBase<BaseFloat> &in_value,
@@ -694,6 +735,10 @@ void CuDNN3DConvolutionComponent::Read(std::istream &is, bool binary) {
   int32 input_vectorization;
   ReadBasicType(is, binary, &input_vectorization);
   input_vectorization_ = static_cast<TensorVectorizationType>(input_vectorization);
+  ExpectToken(is, binary, "<OutputVectorization>");
+  int32 output_vectorization;
+  ReadBasicType(is, binary, &output_vectorization);
+  output_vectorization_ = static_cast<TensorVectorizationType>(output_vectorization);
   ExpectToken(is, binary, "<FilterParams>");
   // dummy matrix is needed as no option to specify contigous memory in matrix Read()
   CuMatrix<BaseFloat> mat;
@@ -782,6 +827,8 @@ void CuDNN3DConvolutionComponent::Write(std::ostream &os, bool binary) const {
   WriteBasicType(os, binary, upscales[2]);
   WriteToken(os, binary, "<InputVectorization>");
   WriteBasicType(os, binary, static_cast<int32>(input_vectorization_));
+  WriteToken(os, binary, "<OutputVectorization>");
+  WriteBasicType(os, binary, static_cast<int32>(output_vectorization_));
   WriteToken(os, binary, "<FilterParams>");
   filter_params_.Write(os, binary);
   WriteToken(os, binary, "<BiasParams>");
@@ -851,6 +898,7 @@ std::string CuDNN3DConvolutionComponent::Info() const {
          << ", y-upscale=" << upscale_dims[1]
          << ", z-upscale=" << upscale_dims[2]
          << ", input-vectorization=" << input_vectorization_
+         << ", output-vectorization=" << output_vectorization_
          << ", input-num-filters=" << input_num_filters_
          << ", num-filters=" << num_filters_;
   PrintParameterStats(stream, "filter-params", filter_params_);

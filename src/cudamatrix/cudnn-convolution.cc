@@ -25,6 +25,21 @@
 namespace kaldi {
 namespace cudnn {
 
+void TransformTensor(
+    cudnnHandle_t handle, const void *alpha,
+    const cudnnTensorDescriptor_t &x_desc, const void *x_data,
+    const void *beta,
+    const cudnnTensorDescriptor_t &y_desc, void *y_data) {
+#if HAVE_CUDA == 1 && HAVE_CUDNN == 1
+  if (CuDevice::Instantiate().Enabled()) {
+    Timer tim;
+    CUDNN_SAFE_CALL(cudnnTransformTensor(handle, alpha, x_desc,
+                 x_data, beta, y_desc, y_data));
+    CuDevice::Instantiate().AccuProfile(__func__, tim.Elapsed());
+  }
+#endif
+}
+
 void ConvolutionForward(
     cudnnHandle_t handle, const void *alpha,
     const cudnnTensorDescriptor_t &x_desc, const void *x_data,

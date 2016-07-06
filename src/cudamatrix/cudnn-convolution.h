@@ -28,6 +28,14 @@
 
 namespace kaldi {
 namespace cudnn {
+  void TransformTensor(cudnnHandle_t handle,
+                          const void *alpha,
+                          const cudnnTensorDescriptor_t &x_desc,
+                          const void *x_data,
+                          const void *beta,
+                          const cudnnTensorDescriptor_t &y_desc,
+                          void *y_data);
+
   void ConvolutionForward(cudnnHandle_t handle,
                           const void *alpha,
                           const cudnnTensorDescriptor_t &x_desc,
