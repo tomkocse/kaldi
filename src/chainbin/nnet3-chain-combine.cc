@@ -76,6 +76,7 @@ int main(int argc, char *argv[]) {
 
     Nnet nnet;
     ReadKaldiObject(raw_nnet_rxfilename, &nnet);
+    SetTestMode(true, &nnet);  // relates to batch-norm.
 
 
     std::vector<NnetChainExample> egs;
@@ -117,5 +118,3 @@ int main(int argc, char *argv[]) {
     return -1;
   }
 }
-
-
